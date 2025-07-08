@@ -1,0 +1,8 @@
+click
+Flask
+Flask-SQLAlchemy
+numpy
+openai-whisper
+pydub
+requests
+deep-translator
