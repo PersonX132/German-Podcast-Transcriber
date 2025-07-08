@@ -1,0 +1,583 @@
+<!DOCTYPE html> 
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>German Podcast Transcriber</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <div id="header-left">
+                <h1>German Podcast Transcriber</h1>
+            </div>
+            <div id="header-right">
+                <nav class="app-nav">
+                    <button class="nav-tab active" data-tab="library">Library</button>
+                    <button class="nav-tab" data-tab="vocabulary">Vocabulary</button>
+                    <button class="nav-tab hidden" data-tab="player">Now Playing</button>
+                </nav>
+            </div>
+        </header>
+
+        <main class="app-main">
+            <section id="library-view" class="view active">
+                <div class="upload-btn-container">
+                    <label for="audio-uploader" class="upload-btn">
+                        <span>Transcribe New Audio</span>
+                    </label>
+                    <input type="file" id="audio-uploader" accept="audio/*">
+                </div>
+                <h2>My Library</h2>
+                <ul id="transcript-list"></ul>
+            </section>
+
+            <section id="player-view" class="view">
+                <div id="transcript-container">
+                    <div class="placeholder-text">Select an item from your library to begin.</div>
+                </div>
+            </section>
+
+            <section id="vocabulary-view" class="view">
+                <div id="dictionary-content"></div>
+            </section>
+        </main>
+
+        <footer id="global-player" class="hidden">
+            <audio id="audio-player" style="display:none;"></audio>
+            <div class="progress-container">
+                <div id="current-time" class="time-display">0:00</div>
+                <div class="seek-bar-container" id="seek-bar-container">
+                    <div class="seek-bar-track">
+                        <div class="seek-bar-progress" id="seek-bar-progress"></div>
+                    </div>
+                </div>
+                <div id="total-duration" class="time-display">0:00</div>
+            </div>
+            <div class="controls-center">
+                <button id="play-pause-btn">
+                    <svg id="play-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><polygon points="10,8 16,12 10,16 10,8"></polygon></svg>
+                    <svg id="pause-icon" class="hidden" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                </button>
+            </div>
+        </footer>
+    </div>
+
+    <div id="top-loader">
+        <div id="top-loader-bar"></div>
+    </div>
+
+    <div id="modal-overlay" class="hidden">
+        <div class="modal-content" id="translation-modal-content">
+            <button class="modal-close-btn">&times;</button>
+            <h3 class="modal-original-word"></h3>
+            <p class="modal-translation"></p>
+            <div class="modal-actions"></div>
+        </div>
+    </div>
+
+    <div id="word-details-modal" class="hidden">
+        <div class="modal-content">
+            <button class="modal-close-btn">&times;</button>
+            <h3 class="modal-original-word"></h3>
+            <div class="modal-actions" id="word-details-actions"></div>
+            <div id="word-details-content"></div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            
+            let currentTranscriptId = null,
+                vocabularyCache = [],
+                currentLines = [],
+                currentLineIndex = -1;
+            const playerView = document.getElementById('player-view'),
+                uploaderInput = document.getElementById('audio-uploader'),
+                audioPlayer = document.getElementById('audio-player'),
+                transcriptContainer = document.getElementById('transcript-container'),
+                transcriptList = document.getElementById('transcript-list'),
+                topLoader = document.getElementById('top-loader'),
+                translationModal = document.getElementById('modal-overlay'),
+                detailsModal = document.getElementById('word-details-modal'),
+                navTabs = document.querySelectorAll('.nav-tab'),
+                globalPlayer = document.getElementById('global-player'),
+                playPauseBtn = document.getElementById('play-pause-btn'),
+                playIcon = document.getElementById('play-icon'),
+                pauseIcon = document.getElementById('pause-icon'),
+                currentTimeEl = document.getElementById('current-time'),
+                totalDurationEl = document.getElementById('total-duration'),
+                seekBarContainer = document.getElementById('seek-bar-container'),
+                seekBarProgress = document.getElementById('seek-bar-progress');
+
+            loadLibrary();
+            setupEventListeners();
+
+            function setupEventListeners() {
+                uploaderInput.addEventListener('change', handleFileUpload);
+                playPauseBtn.addEventListener('click', togglePlayPause);
+                audioPlayer.addEventListener('timeupdate', updateProgress);
+                audioPlayer.addEventListener('loadedmetadata', setDuration);
+                audioPlayer.addEventListener('play', () => updatePlayPauseIcon(true));
+                audioPlayer.addEventListener('pause', () => updatePlayPauseIcon(false));
+                audioPlayer.addEventListener('ended', () => {
+                    updatePlayPauseIcon(false);
+                    audioPlayer.currentTime = 0;
+                    if (currentLines[currentLineIndex]) currentLines[currentLineIndex].classList.remove('active-line');
+                    currentLineIndex = -1;
+                });
+                seekBarContainer.addEventListener('click', setSeek);
+                translationModal.querySelector('.modal-close-btn').addEventListener('click', () => translationModal.classList.add('hidden'));
+                translationModal.addEventListener('click', (e) => e.target === translationModal && translationModal.classList.add('hidden'));
+                detailsModal.querySelector('.modal-close-btn').addEventListener('click', () => detailsModal.classList.add('hidden'));
+                detailsModal.addEventListener('click', (e) => e.target === detailsModal && detailsModal.classList.add('hidden'));
+                navTabs.forEach(tab => tab.addEventListener('click', () => switchTabView(tab.dataset.tab)));
+                document.addEventListener('keydown', (e) => {
+                    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                    if ((e.key === ' ' || e.key.toLowerCase() === 'k') && currentTranscriptId) {
+                        e.preventDefault();
+                        togglePlayPause();
+                    }
+                });
+            }
+
+            function switchTabView(tabName) {
+                document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+                document.getElementById(`${tabName}-view`).classList.add('active');
+                navTabs.forEach(t => {
+                    if (t.dataset.tab !== 'player') t.classList.toggle('active', t.dataset.tab === tabName);
+                });
+                document.querySelector('.nav-tab[data-tab="player"]').classList.toggle('active', tabName === 'player');
+                if (tabName === 'vocabulary') loadVocabulary();
+                if (tabName === 'library') loadLibrary();
+            }
+
+            async function loadLibrary() {
+                showLoading(true);
+                try {
+                    const response = await fetch('/api/transcripts');
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    const transcripts = await response.json();
+                    transcriptList.innerHTML = '';
+                    if (transcripts.length === 0) {
+                        transcriptList.innerHTML = '<li class="placeholder-text" style="font-size: 1.2rem; border: none;">Upload some audio to get started.</li>';
+                        return;
+                    }
+                    transcripts.forEach(t => {
+                        const li = document.createElement('li');
+                        li.className = 'transcript-item';
+                        li.onclick = () => loadTranscript(t.id);
+                        const title = document.createElement('span');
+                        title.className = 'transcript-item-title';
+                        title.textContent = t.title;
+                        const deleteBtn = document.createElement('button');
+                        deleteBtn.className = 'delete-btn';
+                        deleteBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
+                        deleteBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            deleteTranscript(t.id, t.title);
+                        };
+                        li.appendChild(title);
+                        li.appendChild(deleteBtn);
+                        transcriptList.appendChild(li);
+                    });
+                } catch (e) {
+                    console.error("Failed to load library:", e);
+                    showErrorToast('Could not load library.');
+                } finally {
+                    showLoading(false);
+                }
+            }
+
+            async function loadTranscript(id) {
+                if (currentTranscriptId === id) {
+                    switchTabView('player');
+                    return;
+                }
+                showLoading(true);
+                try {
+                    const response = await fetch(`/api/transcripts/${id}`);
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'Failed to load transcript');
+                    displayTranscript(data.transcript_data);
+                    audioPlayer.src = data.audio_url;
+                    currentTranscriptId = id;
+                    globalPlayer.classList.remove('hidden');
+                    document.querySelector('.nav-tab[data-tab="player"]').classList.remove('hidden');
+                    switchTabView('player');
+                } catch (e) {
+                    showErrorToast(e.message);
+                } finally {
+                    showLoading(false);
+                }
+            }
+
+            function handleFileUpload(event) {
+                const audioFile = event.target.files[0];
+                if (!audioFile) return;
+                showLoading(true);
+                const formData = new FormData();
+                formData.append('audio', audioFile);
+                fetch('/api/transcripts', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json().then(data => ({
+                        ok: response.ok,
+                        data
+                    })))
+                    .then(({
+                        ok,
+                        data
+                    }) => {
+                        if (!ok) throw new Error(data.error || 'Unknown transcription error.');
+                        loadLibrary();
+                        loadTranscript(data.id);
+                    })
+                    .catch(err => {
+                        console.error('Transcription Error:', err);
+                        showErrorToast(err.message);
+                    })
+                    .finally(() => {
+                        showLoading(false);
+                        uploaderInput.value = '';
+                    });
+            }
+
+            function displayTranscript(data) {
+                transcriptContainer.innerHTML = '';
+                currentLines = [];
+                currentLineIndex = -1;
+                if (!data.segments || data.segments.length === 0) {
+                    transcriptContainer.innerHTML = '<div class="placeholder-text">Whisper could not find any words in this audio.</div>';
+                    return;
+                }
+                data.segments.forEach(segment => {
+                    const p = document.createElement('p');
+                    p.dataset.segmentStart = segment.start;
+                    p.dataset.segmentEnd = segment.end;
+                    if (segment.words) {
+                        segment.words.forEach(wordInfo => {
+                            if (typeof wordInfo.start === 'number' && typeof wordInfo.end === 'number') {
+                                const wordSpan = document.createElement('span');
+                                wordSpan.textContent = wordInfo.word + ' ';
+                                wordSpan.dataset.start = wordInfo.start;
+                                wordSpan.dataset.end = wordInfo.end;
+                                wordSpan.onclick = (e) => {
+                                    e.stopPropagation();
+                                    openTranslationModal(wordInfo);
+                                };
+                                p.appendChild(wordSpan);
+                            }
+                        });
+                    }
+                    transcriptContainer.appendChild(p);
+                    currentLines.push(p);
+                });
+            }
+
+            function togglePlayPause() {
+                if (audioPlayer.paused || audioPlayer.ended) {
+                    audioPlayer.play();
+                } else {
+                    audioPlayer.pause();
+                }
+            }
+
+            function updatePlayPauseIcon(isPlaying) {
+                playIcon.classList.toggle('hidden', isPlaying);
+                pauseIcon.classList.toggle('hidden', !isPlaying);
+            }
+
+            function formatTime(seconds) {
+                const minutes = Math.floor(seconds / 60);
+                const secs = Math.floor(seconds % 60);
+                return `${minutes}:${secs < 10 ? '0' : ''}${secs}`;
+            }
+
+            function updateProgress() {
+                const {
+                    currentTime,
+                    duration
+                } = audioPlayer;
+                if (isNaN(duration)) return;
+
+                seekBarProgress.style.width = `${(currentTime / duration) * 100}%`;
+                currentTimeEl.textContent = formatTime(currentTime);
+
+                if (!playerView.classList.contains('active')) return;
+
+                let newActiveLineIndex = -1;
+                for (let i = 0; i < currentLines.length; i++) {
+                    const lineStart = parseFloat(currentLines[i].dataset.segmentStart);
+                    const lineEnd = parseFloat(currentLines[i].dataset.segmentEnd);
+                    if (currentTime >= lineStart && currentTime <= lineEnd) {
+                        newActiveLineIndex = i;
+                        break;
+                    }
+                }
+
+                if (newActiveLineIndex !== currentLineIndex) {
+                    if (currentLines[currentLineIndex]) {
+                        currentLines[currentLineIndex].classList.remove('active-line');
+                    }
+                    if (currentLines[newActiveLineIndex]) {
+                        currentLines[newActiveLineIndex].classList.add('active-line');
+                        currentLines[newActiveLineIndex].scrollIntoView({
+                            behavior: 'smooth',
+                            block: 'center'
+                        });
+                    }
+                    currentLineIndex = newActiveLineIndex;
+                }
+            }
+
+            function setDuration() {
+                totalDurationEl.textContent = formatTime(audioPlayer.duration);
+            }
+
+            function setSeek(e) {
+                const rect = seekBarContainer.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                audioPlayer.currentTime = (clickX / rect.width) * audioPlayer.duration;
+                currentLineIndex = -1;
+            }
+
+            async function openTranslationModal(wordInfo) {
+                const cleanedWord = wordInfo.word.trim().replace(/[.,!?]/g, '').toLowerCase();
+                if (!cleanedWord) return;
+                const modalWordEl = translationModal.querySelector('.modal-original-word'),
+                    modalTranslationEl = translationModal.querySelector('.modal-translation'),
+                    modalActions = translationModal.querySelector('.modal-actions');
+                modalWordEl.textContent = cleanedWord;
+                modalTranslationEl.textContent = 'Looking up...';
+                modalActions.innerHTML = '';
+                translationModal.classList.remove('hidden');
+                try {
+                    const response = await fetch('/api/dictionary_lookup', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            word: cleanedWord
+                        })
+                    });
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'Dictionary lookup failed');
+                    modalTranslationEl.textContent = data.primary_translation;
+                    const addBtn = document.createElement('button');
+                    addBtn.className = 'modal-btn';
+                    addBtn.textContent = 'Add to Vocabulary';
+                    addBtn.onclick = () => addWordToVocabulary(data);
+                    const seekBtn = document.createElement('button');
+                    seekBtn.className = 'modal-btn secondary';
+                    seekBtn.textContent = 'Play from here';
+                    seekBtn.onclick = () => {
+                        audioPlayer.currentTime = wordInfo.start;
+                        audioPlayer.play();
+                        translationModal.classList.add('hidden');
+                    };
+                    modalActions.appendChild(addBtn);
+                    modalActions.appendChild(seekBtn);
+                } catch (error) {
+                    showErrorToast(error.message);
+                    translationModal.classList.add('hidden');
+                }
+            }
+
+            async function addWordToVocabulary(wordData) {
+                const payload = {
+                    german: wordData.original,
+                    english: wordData.primary_translation,
+                    gender: wordData.gender,
+                    details: wordData.details
+                };
+                try {
+                    const response = await fetch('/api/vocabulary', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await response.json();
+                    if (response.status === 409) {
+                        showToast('Word is already in your vocabulary.');
+                    } else if (!response.ok) {
+                        throw new Error(data.error || 'Failed to add word');
+                    } else {
+                        showToast(`Added "${wordData.original}"`);
+                        vocabularyCache.push(data);
+                        vocabularyCache.sort((a, b) => a.german.localeCompare(b.german));
+                        if (document.getElementById('vocabulary-view').classList.contains('active')) renderVocabulary(vocabularyCache);
+                    }
+                } catch (error) {
+                    showErrorToast(error.message);
+                } finally {
+                    translationModal.classList.add('hidden');
+                }
+            }
+
+            async function loadVocabulary() {
+                try {
+                    const response = await fetch('/api/vocabulary');
+                    if (!response.ok) throw new Error('Failed to fetch vocabulary');
+                    vocabularyCache = await response.json();
+                    renderVocabulary(vocabularyCache);
+                } catch (error) {
+                    console.error('Error loading vocabulary:', error);
+                    document.getElementById('vocabulary-view').innerHTML = '<h2>My Vocabulary</h2><p class="placeholder-text">Could not load vocabulary.</p>';
+                }
+            }
+
+            function renderVocabulary(vocabulary) {
+                let content = '<h2>My Vocabulary</h2>';
+                if (vocabulary.length === 0) {
+                    content += '<p class="placeholder-text" style="font-size: 1.2rem;">Words you save will appear here.</p>';
+                } else {
+                    const listItems = vocabulary.map(item => `<li class="vocab-item" data-id="${item.id}"><div class="german-word-container"><span class="german-word">${item.german}</span>${item.gender ? `<span class="gender">${item.gender}</span>` : ''}</div><span class="english-translation">${item.english}</span><button class="delete-btn" data-id="${item.id}" title="Delete word"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button></li>`).join('');
+                    content += `<ul>${listItems}</ul>`;
+                }
+                document.getElementById('vocabulary-view').innerHTML = content;
+                document.querySelectorAll('#vocabulary-view .vocab-item').forEach(item => {
+                    item.addEventListener('click', (e) => {
+                        if (e.target.closest('.delete-btn')) return;
+                        showWordDetails(item.dataset.id);
+                    });
+                });
+                document.querySelectorAll('#vocabulary-view .delete-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        deleteWordFromVocabulary(btn.dataset.id);
+                    });
+                });
+            }
+
+            function showWordDetails(wordId) {
+                const word = vocabularyCache.find(w => w.id == wordId);
+                if (!word) {
+                    console.error("Could not find word in cache:", wordId);
+                    return;
+                }
+
+                const modalWordEl = detailsModal.querySelector('.modal-original-word');
+                const detailsContent = document.getElementById('word-details-content');
+                const detailsActions = document.getElementById('word-details-actions');
+
+                modalWordEl.textContent = '';
+                detailsContent.innerHTML = '';
+                detailsActions.innerHTML = '';
+                modalWordEl.textContent = `${word.gender ? word.gender + ' ' : ''}${word.german}`;
+
+                if (word.details && word.details[0] && word.details[0].meanings) {
+                    let isVerb = false;
+                    word.details[0].meanings.forEach(meaning => {
+                        if (meaning.partOfSpeech.toLowerCase() === 'verb') isVerb = true;
+                        let sectionHtml = `<div class="word-details-section"><h4>${meaning.partOfSpeech}</h4><ul>`;
+                        meaning.definitions.forEach(def => {
+                            sectionHtml += `<li><div>${def.definition}</div>`;
+                            if (def.example) {
+                                sectionHtml += `<div class="example">"${def.example}"</div>`;
+                            }
+                            if ((def.synonyms && def.synonyms.length > 0) || (def.antonyms && def.antonyms.length > 0)) {
+                                sectionHtml += `<div class="synonyms">`;
+                                if (def.synonyms && def.synonyms.length > 0) sectionHtml += `<strong>Synonyms:</strong> ${def.synonyms.join(', ')}<br>`;
+                                if (def.antonyms && def.antonyms.length > 0) sectionHtml += `<strong>Antonyms:</strong> ${def.antonyms.join(', ')}`;
+                                sectionHtml += `</div>`;
+                            }
+                            sectionHtml += `</li>`;
+                        });
+                        sectionHtml += `</ul></div>`;
+                        detailsContent.innerHTML += sectionHtml;
+                    });
+
+                    if (isVerb) {
+                        const conjugationLink = document.createElement('a');
+                        conjugationLink.href = `https://www.verbformen.com/conjugation/${encodeURIComponent(word.german)}.htm`;
+                        conjugationLink.target = '_blank';
+                        conjugationLink.rel = 'noopener noreferrer';
+                        conjugationLink.className = 'modal-link-btn';
+                        conjugationLink.innerHTML = '<span>View Conjugations</span>';
+                        detailsActions.appendChild(conjugationLink);
+                    }
+                } else {
+                    detailsContent.innerHTML = `<p class="placeholder-text">Detailed definitions are not available, but the basic translation is: <strong>${word.english}</strong>.</p>`;
+                    if (word.german.endsWith('en')) { 
+                        const conjugationLink = document.createElement('a');
+                        conjugationLink.href = `https://www.verbformen.com/conjugation/${encodeURIComponent(word.german)}.htm`;
+                        conjugationLink.target = '_blank';
+                        conjugationLink.rel = 'noopener noreferrer';
+                        conjugationLink.className = 'modal-link-btn';
+                        conjugationLink.innerHTML = '<span>View Conjugations</span>';
+                        detailsActions.appendChild(conjugationLink);
+                    }
+                }
+                detailsModal.classList.remove('hidden');
+            }
+
+            async function deleteTranscript(transcriptId, title) {
+                if (!confirm(`Are you sure you want to delete "${title}"? This cannot be undone.`)) return;
+                try {
+                    const response = await fetch(`/api/transcripts/${transcriptId}`, {
+                        method: 'DELETE'
+                    });
+                    if (!response.ok) throw new Error('Failed to delete');
+                    showToast('Transcript deleted.');
+                    loadLibrary();
+                    if (currentTranscriptId == transcriptId) {
+                        audioPlayer.src = "";
+                        currentTranscriptId = null;
+                        transcriptContainer.innerHTML = '<div class="placeholder-text">Select an item from your library to begin.</div>';
+                        globalPlayer.classList.add('hidden');
+                        document.querySelector('.nav-tab[data-tab="player"]').classList.add('hidden');
+                        switchTabView('library');
+                    }
+                } catch (error) {
+                    showErrorToast('Failed to delete transcript.');
+                }
+            }
+
+            async function deleteWordFromVocabulary(wordId) {
+                try {
+                    const response = await fetch(`/api/vocabulary/${wordId}`, {
+                        method: 'DELETE'
+                    });
+                    if (!response.ok) throw new Error('Failed to delete');
+                    showToast('Word removed.');
+                    vocabularyCache = vocabularyCache.filter(w => w.id != wordId);
+                    renderVocabulary(vocabularyCache);
+                } catch (error) {
+                    showErrorToast('Failed to delete word.');
+                }
+            }
+
+            function showLoading(isLoading) {
+                document.getElementById('top-loader').classList.toggle('active', isLoading);
+            }
+
+            function showToast(message, isError = false) {
+                const toast = document.createElement('div');
+                toast.className = `toast ${isError ? 'error' : ''}`;
+                toast.textContent = message;
+                document.body.appendChild(toast);
+                setTimeout(() => {
+                    toast.classList.add('show');
+                }, 10);
+                setTimeout(() => {
+                    toast.classList.remove('show');
+                    setTimeout(() => toast.remove(), 500);
+                }, 3000);
+            }
+
+            function showErrorToast(message) {
+                showToast(message, true);
+            }
+        });
+    </script>
+</body>
+</html>
