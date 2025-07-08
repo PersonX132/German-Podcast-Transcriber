@@ -3,17 +3,14 @@ import click
 from flask import Flask
 from flask.cli import with_appcontext
 
-from .models import db
-from .routes import main_routes
-
+from app.models import db
+from app.routes import main_routes
 def create_app():
-    """creates and configures Flask instance"""
     app = Flask(__name__, instance_relative_config=True)
   
     basedir = os.path.abspath(os.path.dirname(__file__))
     
     secret_key = os.environ.get('SECRET_KEY', 'fallback') # Load from environment variables, uses fallback as a fallback
-
     app.config.from_mapping(
         SECRET_KEY=secret_key,
         SQLALCHEMY_DATABASE_URI=f"sqlite:///{os.path.join(basedir, 'library.db')}",
@@ -35,7 +32,6 @@ def create_app():
     @click.command('init-db')
     @with_appcontext
     def init_db_command():
-        """Clear existing data and create new tables."""
         db.create_all()
         click.echo('Initialized the database.')
     
