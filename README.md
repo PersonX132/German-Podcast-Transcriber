@@ -3,7 +3,7 @@ German Podcast Transcriber is a web application that uses Python's Flask framewo
 
 ## Navigation
 - [Usage](#usage)
-- [Setup and Installation](#setup-and-installation)
+- [Setup and Installation](#installation-and-setup)
 - [Tech Stack and Acknowledgements](#tech-stack-and-acknowledgements)
 
 # Usage 
@@ -24,7 +24,7 @@ Note:
 4. Vocabulary Page
  <img width="1440" alt="image" src="https://github.com/user-attachments/assets/37fad0b1-700f-4ae9-86a1-12b1bc9869b2" />
  
-# Setup and Installation
+# Installation and Setup
 1. Clone the repository, or download the zip file and unzip it.
 2. Create a virtual environment and activate it
     ```bash
