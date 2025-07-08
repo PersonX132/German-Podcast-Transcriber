@@ -1,8 +1,9 @@
-click
-Flask
+click~=8.1.8
+Flask~=3.1.1
 Flask-SQLAlchemy
-numpy
+numpy~=2.0.2
 openai-whisper
-pydub
-requests
+pydub~=0.25.1
+requests~=2.32.4
 deep-translator
+werkzeug~=3.1.3
